@@ -1,4 +1,4 @@
 ffmpeg-python
 requests
-pyogg
+git+https://github.com/TeamPyOgg/PyOgg
 boto3
