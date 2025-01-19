@@ -1,4 +1,4 @@
-FROM python:3.14
+FROM python:3.13
 WORKDIR /app
 COPY . .
 RUN apt install libopus0 libopusfile0 libopusenc0
