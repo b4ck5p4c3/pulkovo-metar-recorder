@@ -25,13 +25,13 @@ s3_client = session.client(service_name="s3", aws_access_key_id=S3_ACCESS_KEY, a
 
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
 
-def upload_to_s3(path, data):
-    s3_client.put_object(Body=data, Bucket=S3_BUCKET_NAME, Key=path)
+def upload_to_s3(path, data, content_type):
+    s3_client.put_object(Body=data, Bucket=S3_BUCKET_NAME, Key=path, ContentType=content_type)
     print(f"uploaded {path}")
 
 def process_voice(ogg_file, path):
     try:
-        upload_to_s3(path, ogg_file)
+        upload_to_s3(path, ogg_file, "application/ogg")
         data = {
             "url": f"{PUBLIC_S3_ENDPOINT_URL}/{path}",
             "task": "transcribe",
@@ -40,7 +40,7 @@ def process_voice(ogg_file, path):
         print("parsing")
         result = requests.post(WHISPER_API_URL, json=data)
         print(result.json()["output"]["text"])
-        upload_to_s3(f"{path}.whisper.json", result.text.encode("utf-8"))
+        upload_to_s3(f"{path}.whisper.json", result.text.encode("utf-8"), "application/json")
     except Exception as e:
         print(e)
 
