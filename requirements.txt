@@ -1,4 +1,4 @@
-python-ffmpeg
+ffmpeg-python
 requests
 pyogg
 boto3
