@@ -1,0 +1,4 @@
+ffmpeg
+requests
+pyogg
+boto3
