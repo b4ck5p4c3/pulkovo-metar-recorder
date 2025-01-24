@@ -12,11 +12,12 @@ import os
 import boto3
 import dotenv
 import logging
+import redis
+import json
 
 from sqlalchemy import create_engine, Column, String, TIMESTAMP, JSON, Integer
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,15 @@ S3_ENDPOINT_URL = os.environ["S3_ENDPOINT_URL"]
 PUBLIC_S3_ENDPOINT_URL = os.environ["PUBLIC_S3_ENDPOINT_URL"]
 WHISPER_API_URL = os.environ["WHISPER_API_URL"]
 POSTGRES_URL = os.environ["POSTGRES_URL"]
+REDIS_URL = os.environ["REDIS_URL"]
+
+r = redis.from_url(REDIS_URL)
+
+def notify_recording_update(recording_id, parsed):
+    r.publish("recording_update", json.dumps({
+        "id": recording_id,
+        "parsed": parsed
+    }))
 
 Base = declarative_base()
 class Recording(Base):
@@ -71,6 +81,7 @@ def process_voice(timestamp, length, ogg_file, path):
         )
         session.add(recording)
         session.commit()
+        notify_recording_update(str(recording.id), False)
         data = {
             "url": f"{PUBLIC_S3_ENDPOINT_URL}/{path}",
             "task": "transcribe",
@@ -83,6 +94,7 @@ def process_voice(timestamp, length, ogg_file, path):
         logger.info(f"parsed: '{parsed_text}'")
         recording.whisper_data = result_data
         session.commit()
+        notify_recording_update(str(recording.id), True)
         upload_to_s3(f"{path}.whisper.json", result.text.encode("utf-8"), "application/json")
     except Exception as e:
         logger.error(e)
