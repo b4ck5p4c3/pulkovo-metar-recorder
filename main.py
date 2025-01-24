@@ -43,6 +43,7 @@ class Recording(Base):
     length = Column(Integer, nullable=False, name="length")
     storage_key = Column(String, nullable=False, name="storageKey")
     whisper_data = Column(JSON, nullable=True, name="whisperData")
+    processed_text = Column(String, nullable=True, name="processedText")
 
 engine = create_engine(POSTGRES_URL)
 Base.metadata.create_all(engine)
@@ -65,7 +66,8 @@ def process_voice(timestamp, length, ogg_file, path):
             timestamp=timestamp,
             length=length,
             storage_key=path,
-            whisper_data=None
+            whisper_data=None,
+            processed_text=None
         )
         session.add(recording)
         session.commit()
