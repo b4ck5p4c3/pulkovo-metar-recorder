@@ -2,3 +2,6 @@ ffmpeg-python
 requests
 git+https://github.com/TeamPyOgg/PyOgg
 boto3
+python-dotenv
+sqlalchemy
+psycopg2-binary

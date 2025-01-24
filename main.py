@@ -10,6 +10,19 @@ import pyogg
 import datetime
 import os
 import boto3
+import dotenv
+import logging
+
+from sqlalchemy import create_engine, Column, String, TIMESTAMP, JSON, Integer
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+dotenv.load_dotenv(".env")
+dotenv.load_dotenv(".env.local")
 
 METAR_URL = os.environ["METAR_URL"]
 SAMPLE_RATE = int(os.environ["SAMPLE_RATE"])
@@ -19,6 +32,21 @@ S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
 S3_ENDPOINT_URL = os.environ["S3_ENDPOINT_URL"] 
 PUBLIC_S3_ENDPOINT_URL = os.environ["PUBLIC_S3_ENDPOINT_URL"]
 WHISPER_API_URL = os.environ["WHISPER_API_URL"]
+POSTGRES_URL = os.environ["POSTGRES_URL"]
+
+Base = declarative_base()
+class Recording(Base):
+    __tablename__ = 'recordings'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False, name="id")
+    timestamp = Column(TIMESTAMP(timezone=False), nullable=False, name="timestamp")
+    length = Column(Integer, nullable=False, name="length")
+    storage_key = Column(String, nullable=False, name="storageKey")
+    whisper_data = Column(JSON, nullable=True, name="whisperData")
+
+engine = create_engine(POSTGRES_URL)
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
 
 session = boto3.session.Session()
 s3_client = session.client(service_name="s3", aws_access_key_id=S3_ACCESS_KEY, aws_secret_access_key=S3_SECRET_KEY, endpoint_url=S3_ENDPOINT_URL)
@@ -27,22 +55,35 @@ executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
 
 def upload_to_s3(path, data, content_type):
     s3_client.put_object(Body=data, Bucket=S3_BUCKET_NAME, Key=path, ContentType=content_type)
-    print(f"uploaded {path}")
+    logger.info(f"uploaded {path}")
 
-def process_voice(ogg_file, path):
+def process_voice(timestamp, length, ogg_file, path):
+    session = Session()
     try:
         upload_to_s3(path, ogg_file, "application/ogg")
+        recording = Recording(
+            timestamp=timestamp,
+            length=length,
+            storage_key=path,
+            whisper_data=None
+        )
+        session.add(recording)
+        session.commit()
         data = {
             "url": f"{PUBLIC_S3_ENDPOINT_URL}/{path}",
             "task": "transcribe",
             "language": "en"
         }
-        print("parsing")
+        logger.info("parsing")
         result = requests.post(WHISPER_API_URL, json=data)
-        print(result.json()["output"]["text"])
+        result_data = result.json()
+        parsed_text = result_data["output"]["text"] 
+        logger.info(f"parsed: '{parsed_text}'")
+        recording.whisper_data = result_data
+        session.commit()
         upload_to_s3(f"{path}.whisper.json", result.text.encode("utf-8"), "application/json")
     except Exception as e:
-        print(e)
+        logger.error(e)
 
 def get_audio_chunk(process, chunk_size):
     return process.stdout.read(chunk_size)
@@ -70,7 +111,9 @@ def process_data(process):
 
     current_buffer = []
 
-    print('reading')
+    logger.info('reading')
+
+    start_timestamp = datetime.datetime.now()
 
     while True:
         chunk = get_audio_chunk(process, chunk_10ms_size * 2)
@@ -81,7 +124,7 @@ def process_data(process):
         max_level = max(abs(min(last_150ms)), max(last_150ms))
         if max_level < 10000:
             if len(current_buffer) >= chunk_10ms_size * 1500:
-                print("saving")
+                logger.info("saving")
                 samples = current_buffer[:-(chunk_10ms_size * 15)]
                 datetime_string = datetime.datetime.now(datetime.timezone.utc).isoformat().split("+")[0].replace(":", "_").replace(".", "_")
                 date_string = datetime_string.split("T")[0]
@@ -89,7 +132,8 @@ def process_data(process):
                 random_id = str(uuid.uuid4())
                 path = f"{date_string}/{datetime_string}-{length_seconds:.2f}-{random_id}.ogg"
                 ogg_file = build_ogg_file(samples)
-                executor.submit(process_voice, ogg_file, path)
+                executor.submit(process_voice, start_timestamp, round(length_seconds * 1000), ogg_file, path)
+                start_timestamp = datetime.datetime.now()
                 current_buffer = current_buffer[-(chunk_10ms_size * 15):]
 
 process = (
